@@ -6,8 +6,8 @@ from qdrant_client.http.models import (
     VectorParams,
     PointStruct,
 )
-from .config import get_settings
-from .schemas import ChunkWithVector
+from config import get_settings
+from schemas import ChunkWithVector
 
 settings = get_settings()
 
