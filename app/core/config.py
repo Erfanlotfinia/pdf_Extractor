@@ -9,7 +9,11 @@ class Settings(BaseSettings):
     QDRANT_URL: str = "http://localhost:6333"
     EMBEDDING_MODEL_NAME: str = "text-embedding-3-small"
     QDRANT_COLLECTION_NAME: str = "pdf-vectors"
-
+    MINIO_ROOT_USER: str = "minioadmin"
+    MINIO_ROOT_PASSWORD: str = "minioadmin"
+    MINIO_HOST: str = "minio"
+    MINIO_PORT: int = 9000
+    MINIO_BUCKET: str = "docs"
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

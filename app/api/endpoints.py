@@ -1,52 +1,56 @@
 import httpx
-import os
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from fastapi.responses import JSONResponse
 from uuid import uuid4
+from botocore.exceptions import NoCredentialsError, PartialCredentialsError, ClientError
 
-from models.schemas import VectorizeRequest, VectorizeResponse, ErrorResponse
+from models.schemas import VectorizeRequest, VectorizeResponse, ErrorResponse, UploadResponse
 from services.pdf_processor import PDFProcessor
 from services.vector_service import VectorService
+from services.storage_service import StorageService, MinioStorageService
 
 router = APIRouter()
 
 # --- Dependency Injection ---
 def get_pdf_processor() -> PDFProcessor:
-    # This creates a new client for each request. For high-volume services,
-    # you might consider a shared client instance.
-    return PDFProcessor(client=httpx.AsyncClient())
+    return PDFProcessor()
 
 def get_vector_service() -> VectorService:
     return VectorService()
+
+def get_storage_service() -> StorageService:
+    return MinioStorageService()
 # --------------------------
 
-UPLOAD_DIR = "uploaded_pdfs"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
 @router.post(
-    "/upload-pdf",
-    response_class=JSONResponse,
+    "/upload",
+    response_model=UploadResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid file type"},
+        503: {"model": ErrorResponse, "description": "Storage service unavailable"},
+    },
     tags=["Upload"],
 )
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(
+    file: UploadFile = File(...),
+    storage_service: StorageService = Depends(get_storage_service)
+):
     """
-    Upload a PDF file, save it locally, and return its source_url for processing.
+    Upload a PDF file, stream it to MinIO, and return a unique file key.
     """
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
 
-    file_id = str(uuid4())
-    filename = f"{file_id}.pdf"
-    file_path = os.path.join(UPLOAD_DIR, filename)
+    file_key = f"{str(uuid4())}.pdf"
 
-    with open(file_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
+    try:
+        storage_service.upload_file(file.file, file_key)
+        return UploadResponse(file_key=file_key)
+    except (NoCredentialsError, PartialCredentialsError, ClientError) as e:
+        # Catch specific boto3 exceptions for storage issues
+        raise HTTPException(status_code=503, detail=f"Storage service error: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
 
-    # Construct a local URL for the uploaded file
-    source_url = f"/{UPLOAD_DIR}/{filename}"
-
-    return {"source_url": source_url}
 
 @router.post(
     "/vectorize",
@@ -55,28 +59,29 @@ async def upload_pdf(file: UploadFile = File(...)):
         400: {"model": ErrorResponse, "description": "Invalid URL or file type"},
         422: {"model": ErrorResponse, "description": "PDF Parsing failed"},
         500: {"model": ErrorResponse, "description": "Internal Server Error"},
+        503: {"model": ErrorResponse, "description": "Storage service unavailable"},
     },
 )
 async def vectorize_pdf(
     request: VectorizeRequest,
     pdf_processor: PDFProcessor = Depends(get_pdf_processor),
     vector_service: VectorService = Depends(get_vector_service),
+    storage_service: StorageService = Depends(get_storage_service)
 ):
     """
-    This endpoint accepts a URL to a PDF, processes it, and stores its
-    vectorized content in a Qdrant database.
-    Supports both remote URLs and local uploaded files.
+    This endpoint accepts a file key for a PDF stored in MinIO, processes it, 
+    and stores its vectorized content in a Qdrant database.
     """
     try:
-        source_url = request.source_url
-        # If source_url is a local path, convert to absolute file path
-        if source_url.startswith("/uploaded_pdfs/"):
-            local_path = os.path.join("uploaded_pdfs", os.path.basename(source_url))
-            # Pass a special file:// URL to the processor
-            source_url = f"file://{os.path.abspath(local_path)}"
+        # The source_url is now the object key in MinIO
+        file_key = request.source_url
+        
+        # Download the file from storage into a temporary buffer
+        pdf_file_obj = storage_service.download_file(file_key)
 
         # 1. Process the PDF to extract content
-        file_hash, contents = await pdf_processor.process_pdf(source_url)
+        # The PDFProcessor will now read from the file-like object
+        file_hash, contents = await pdf_processor.process_pdf(pdf_file_obj)
         
         # 2. Check if the document has already been processed
         existing_ids = await vector_service.check_document_exists(file_hash)
@@ -94,12 +99,9 @@ async def vectorize_pdf(
             document_ids=[content.id for content in contents]
         )
 
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=400, detail=f"Failed to download PDF: {e}")
+    except (NoCredentialsError, PartialCredentialsError, ClientError) as e:
+        raise HTTPException(status_code=503, detail=f"Storage service error: {e}")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        # This is a broad exception handler. In a production environment,
-        # it's better to have more specific handlers for different errors
-        # (e.g., Qdrant connection errors, OpenAI API errors).
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")

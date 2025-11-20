@@ -32,3 +32,9 @@ class ErrorResponse(BaseModel):
     status: str = "error"
     detail: str
     code: Optional[int] = None
+    
+class UploadResponse(BaseModel):
+    """
+    Pydantic model for the /upload endpoint response body.
+    """
+    file_key: str = Field(..., description="The unique key of the uploaded PDF file in storage.")
