@@ -41,11 +41,13 @@ pydantic-settings==2.12.0
 pydantic_core==2.41.5
 Pygments==2.19.2
 pypdfium2==5.0.0
+pytest-asyncio==0.24.0
 python-dotenv==1.2.1
 python-multipart==0.0.20
 PyYAML==6.0.3
 qdrant-client==1.11.0
 requests==2.32.3
+respx==0.21.1
 rich==14.2.0
 rich-toolkit==0.16.0
 rignore==0.7.6

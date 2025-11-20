@@ -1,33 +1,32 @@
 version: '3.8'
 
 services:
-  # app:
-  #   build: .
-  #   container_name: pdf-vectorizer
-  #   environment:
-  #     QDRANT_HOST: qdrant
-  #     QDRANT_PORT: 6333
-  #     OPENAI_API_KEY: ${OPENAI_API_KEY}
-  #     EMBEDDING_MODEL: text-embedding-3-small
-  #     EMBEDDING_DIM: 1536
-  #     QDRANT_COLLECTION: pdf_documents
-  #     MINIO_HOST: ${MINIO_HOST}
-  #     MINIO_PORT: ${MINIO_PORT}
-  #     MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-  #     MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-  #     MINIO_BUCKET: ${MINIO_BUCKET}
-  #   ports:
-  #     - "8000:8000"
-  #   volumes:
-  #     - ./app:/app/app
-  #   env_file:
-  #     - .env
-  #   depends_on:
-  #     - qdrant
-  #     - minio
-  #   networks:
-  #     - pdf-vectorizer-net
-
+#  app:
+#    build: .
+#    container_name: pdf-vectorizer
+#    environment:
+#      QDRANT_HOST: qdrant
+#      QDRANT_PORT: 6333
+#      OPENAI_API_KEY: ${OPENAI_API_KEY}
+#      EMBEDDING_MODEL: text-embedding-3-small
+#      EMBEDDING_DIM: 1536
+#      QDRANT_COLLECTION: pdf_documents
+#      MINIO_HOST: minio
+#      MINIO_PORT: 9000
+#      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+#      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+#      MINIO_BUCKET: ${MINIO_BUCKET}
+#    ports:
+#      - "8000:8000"
+#    volumes:
+#      - ./app:/app/app
+#    env_file:
+#      - .env
+#    depends_on:
+#      - qdrant
+#      - minio
+#    networks:
+#      - pdf-vectorizer-net
   qdrant:
     image: qdrant/qdrant:latest
     ports:
@@ -36,6 +35,12 @@ services:
       - qdrant_storage:/qdrant/storage
     networks:
       - pdf-vectorizer-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/collections" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   minio:
     image: minio/minio:latest
@@ -50,19 +55,40 @@ services:
     command: server /data --console-address ":9001"
     networks:
       - pdf-vectorizer-net
+    restart: unless-stopped
+    healthcheck:
+      # check MinIO is responding on the console port
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
   createbuckets:
     image: minio/mc
     depends_on:
       - minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+    # Wait for MinIO to be ready then create bucket (idempotent)
     entrypoint: >
       /bin/sh -c "
-      /usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
-      /usr/bin/mc mb myminio/docs;
-      /usr/bin/mc policy set public myminio/docs;
+        set -e;
+        # keep trying to configure mc until minio responds
+        until /usr/bin/mc --insecure alias set myminio http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} >/dev/null 2>&1; do
+          echo 'Waiting for minio...';
+          sleep 1;
+        done;
+        # create bucket if it does not exist
+        /usr/bin/mc --insecure mb myminio/${MINIO_BUCKET} || true;
+        /usr/bin/mc --insecure policy set public myminio/${MINIO_BUCKET} || true;
+        echo 'Bucket ensured: ' ${MINIO_BUCKET};
+        # exit (this container is a one-shot)
       "
     networks:
       - pdf-vectorizer-net
+    restart: "no"
 
 networks:
   pdf-vectorizer-net:
