@@ -1,58 +1,82 @@
 from typing import List
 from qdrant_client import AsyncQdrantClient, models
-from langchain_openai import OpenAIEmbeddings
+from openai import OpenAI
+import anyio
 import logging
 
 from core.config import settings
 from models.schemas import ProcessedContent
 
+
 class VectorService:
     """
-    Service for handling vector operations, including embedding generation
-    and interaction with a Qdrant vector database.
+    Vector database manager using Avalai embeddings + Qdrant.
     """
+
     def __init__(self):
+        # ---- QDRANT ---------------------------------------------------------
         try:
             self.qdrant_client = AsyncQdrantClient(url=settings.QDRANT_URL)
         except Exception as e:
             logging.exception("Failed to initialize Qdrant client: %s", e)
-            raise RuntimeError(f"Failed to initialize vector database client: {e}") from e
+            raise RuntimeError(f"Failed to initialize vector DB client: {e}") from e
 
+        # ---- AVALAI OPENAI-COMPATIBLE CLIENT --------------------------------
         try:
-            # May raise if API key or configuration invalid
-            self.embedding_model = OpenAIEmbeddings(
-                model=settings.EMBEDDING_MODEL_NAME,
+            self.embedding_client = OpenAI(
                 api_key=settings.OPENAI_API_KEY,
+                base_url=settings.OPENAI_BASE_URL,   # <-- IMPORTANT
             )
         except Exception as e:
-            logging.exception("Failed to initialize embedding model: %s", e)
-            raise RuntimeError(f"Failed to initialize embedding model: {e}") from e
+            logging.exception("Failed to initialize Avalai client: %s", e)
+            raise RuntimeError(f"Failed to initialize embedding provider: {e}") from e
 
+        self.model_name = settings.EMBEDDING_MODEL_NAME  # e.g. "text-embedding-3-small"
         self.collection_name = settings.QDRANT_COLLECTION_NAME
 
+    # -------------------------------------------------------------------------
     async def initialize_collection(self):
-        """
-        Ensures the Qdrant collection exists and is configured correctly.
-        """
+        """Ensure Qdrant collection exists."""
         try:
-            await self.qdrant_client.get_collection(collection_name=self.collection_name)
+            await self.qdrant_client.get_collection(self.collection_name)
         except Exception:
             try:
                 await self.qdrant_client.recreate_collection(
                     collection_name=self.collection_name,
                     vectors_config=models.VectorParams(
-                        size=1536,  # Dimension for text-embedding-3-small
+                        size=1536,       # Avalai text-embedding-3-small dimension
                         distance=models.Distance.COSINE,
                     ),
                 )
             except Exception as e:
-                logging.exception("Failed to create/recreate Qdrant collection '%s': %s", self.collection_name, e)
+                logging.exception("Failed to create/recreate Qdrant collection '%s': %s",
+                                  self.collection_name, e)
                 raise RuntimeError(f"Failed to ensure vector collection: {e}") from e
 
+    # -------------------------------------------------------------------------
+    async def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """
+        Avalai embeddings endpoint is synchronous,
+        so we wrap it in a thread → async compatible.
+        """
+
+        def sync_embed():
+            return self.embedding_client.embeddings.create(
+                model=self.model_name,
+                input=texts
+            )
+
+        try:
+            response = await anyio.to_thread.run_sync(sync_embed)
+        except Exception as e:
+            logging.exception("Embedding generation failed: %s", e)
+            raise RuntimeError(f"Failed to generate embeddings: {e}") from e
+
+        return [item.embedding for item in response.data]
+
+    # -------------------------------------------------------------------------
     async def check_document_exists(self, file_hash: str) -> List[str]:
-        """
-        Checks if a document with the given hash already exists in Qdrant.
-        """
+        """Check if a document with file_hash exists in Qdrant."""
         try:
             response = await self.qdrant_client.scroll(
                 collection_name=self.collection_name,
@@ -67,31 +91,29 @@ class VectorService:
                 limit=10000,
                 with_payload=["id"],
             )
-            # response may be a tuple (results, next_page)
+
             records = response[0] if isinstance(response, (list, tuple)) and response else []
             return [record.id for record in records]
+
         except Exception as e:
-            logging.exception("Error checking document existence in Qdrant: %s", e)
+            logging.exception("Document existence check failed: %s", e)
             raise RuntimeError(f"Failed to check document existence: {e}") from e
 
+    # -------------------------------------------------------------------------
     async def vectorize_and_upsert(self, contents: List[ProcessedContent]):
-        """
-        Generates embeddings for the processed content and upserts them to Qdrant.
-        """
+        """Generate Avalai embeddings + upsert to Qdrant."""
         if not contents:
-            logging.info("No contents provided to vectorize_and_upsert; skipping.")
+            logging.info("No contents provided to vectorize_and_upsert.")
             return
 
         await self.initialize_collection()
 
-        try:
-            texts_to_embed = [content.text_content for content in contents]
-            # aembed_documents is async in this usage
-            vectors = await self.embedding_model.aembed_documents(texts_to_embed)
-        except Exception as e:
-            logging.exception("Embedding generation failed: %s", e)
-            raise RuntimeError(f"Failed to generate embeddings: {e}") from e
+        texts = [c.text_content for c in contents]
 
+        # ---- EMBEDDINGS -----------------------------------------------------
+        vectors = await self.generate_embeddings(texts)
+
+        # ---- UPSERT ---------------------------------------------------------
         try:
             points = [
                 models.PointStruct(
@@ -111,6 +133,7 @@ class VectorService:
                 points=points,
                 wait=True,
             )
+
         except Exception as e:
             logging.exception("Failed to upsert vectors to Qdrant: %s", e)
             raise RuntimeError(f"Failed to upsert vectors: {e}") from e
