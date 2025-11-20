@@ -1,4 +1,4 @@
-import httpx
+import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from uuid import uuid4
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError, ClientError
@@ -69,39 +69,71 @@ async def vectorize_pdf(
     storage_service: StorageService = Depends(get_storage_service)
 ):
     """
-    This endpoint accepts a file key for a PDF stored in MinIO, processes it, 
+    This endpoint accepts a file key or an external URL for a PDF, processes it,
     and stores its vectorized content in a Qdrant database.
     """
     try:
-        # The source_url is now the object key in MinIO
         file_key = request.source_url
-        
-        # Download the file from storage into a temporary buffer
-        pdf_file_obj = storage_service.download_file(file_key)
+
+        try:
+            pdf_file_obj = storage_service.download_file(file_key)
+        except ValueError as e:
+            logging.warning("Download error for '%s': %s", file_key, e)
+            raise HTTPException(status_code=400, detail=str(e))
+        except (NoCredentialsError, PartialCredentialsError, ClientError) as e:
+            logging.exception("Storage credentials or client error: %s", e)
+            raise HTTPException(status_code=503, detail=f"Storage service error: {e}")
+        except RuntimeError as e:
+            logging.exception("Storage service runtime error: %s", e)
+            raise HTTPException(status_code=503, detail=str(e))
+        except Exception as e:
+            logging.exception("Unexpected error downloading file '%s': %s", file_key, e)
+            raise HTTPException(status_code=500, detail=f"Unexpected storage error: {e}")
 
         # 1. Process the PDF to extract content
-        # The PDFProcessor will now read from the file-like object
-        file_hash, contents = await pdf_processor.process_pdf(pdf_file_obj)
-        
+        try:
+            file_hash, contents = await pdf_processor.process_pdf(pdf_file_obj)
+        except ValueError as e:
+            logging.warning("PDF processing failed for '%s': %s", file_key, e)
+            raise HTTPException(status_code=422, detail=str(e))
+        except Exception as e:
+            logging.exception("Unexpected PDF processing error: %s", e)
+            raise HTTPException(status_code=500, detail=f"An unexpected error occurred while parsing PDF: {e}")
+
         # 2. Check if the document has already been processed
-        existing_ids = await vector_service.check_document_exists(file_hash)
+        try:
+            existing_ids = await vector_service.check_document_exists(file_hash)
+        except RuntimeError as e:
+            logging.exception("Vector service check failed: %s", e)
+            raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            logging.exception("Unexpected error checking document existence: %s", e)
+            raise HTTPException(status_code=500, detail=f"Vector service error: {e}")
+
         if existing_ids:
             return VectorizeResponse(
                 message="Document already processed.",
                 document_ids=existing_ids
             )
-            
+
         # 3. If not, vectorize the content and store it
-        await vector_service.vectorize_and_upsert(contents)
-        
+        try:
+            await vector_service.vectorize_and_upsert(contents)
+        except RuntimeError as e:
+            logging.exception("Vectorization/upsert failed: %s", e)
+            raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            logging.exception("Unexpected vectorization error: %s", e)
+            raise HTTPException(status_code=500, detail=f"An unexpected error occurred while vectorizing: {e}")
+
         return VectorizeResponse(
             message="PDF processed and vectorized successfully.",
             document_ids=[content.id for content in contents]
         )
 
-    except (NoCredentialsError, PartialCredentialsError, ClientError) as e:
-        raise HTTPException(status_code=503, detail=f"Storage service error: {e}")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        # re-raise HTTPExceptions unchanged
+        raise
     except Exception as e:
+        logging.exception("Unhandled exception in vectorize endpoint: %s", e)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")

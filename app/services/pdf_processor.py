@@ -1,8 +1,8 @@
 import hashlib
-import tempfile
 from typing import IO, List, Tuple
 import uuid
 from unstructured.partition.pdf import partition_pdf
+import logging
 
 from models.schemas import ProcessedContent
 
@@ -35,21 +35,24 @@ class PDFProcessor:
     async def process_pdf(self, file_obj: IO) -> Tuple[str, List[ProcessedContent]]:
         """
         Orchestrates the PDF processing workflow from a file-like object.
-        
-        Args:
-            file_obj: A file-like object containing the PDF data.
-            
-        Returns:
-            A tuple containing the file hash and a list of ProcessedContent objects.
         """
         try:
             file_hash = self._calculate_hash_from_stream(file_obj)
-            
-            # unstructured's partition_pdf can take a file-like object directly
-            elements = partition_pdf(
-                file=file_obj,
-                strategy="hi_res",
-            )
+
+            try:
+                # unstructured may raise various exceptions on malformed PDFs
+                elements = partition_pdf(
+                    file=file_obj,
+                    strategy="hi_res",
+                )
+            except Exception as e:
+                logging.exception("PDF parsing failed for file hash %s: %s", file_hash, e)
+                raise ValueError(f"Failed to parse PDF: {e}") from e
+
+            if not elements:
+                logging.warning("No elements extracted from PDF (hash=%s).", file_hash)
+                # treat as parsing failure for API consumers
+                raise ValueError("No content could be extracted from the PDF.")
 
             from collections import defaultdict
             page_elements = defaultdict(list)
@@ -122,4 +125,7 @@ class PDFProcessor:
 
             return file_hash, processed_contents
         finally:
-            file_obj.close()
+            try:
+                file_obj.close()
+            except Exception:
+                logging.exception("Failed to close file object for PDF processor.")
