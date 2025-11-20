@@ -1,5 +1,8 @@
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+import os
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import JSONResponse
+from uuid import uuid4
 
 from models.schemas import VectorizeRequest, VectorizeResponse, ErrorResponse
 from services.pdf_processor import PDFProcessor
@@ -16,6 +19,34 @@ def get_pdf_processor() -> PDFProcessor:
 def get_vector_service() -> VectorService:
     return VectorService()
 # --------------------------
+
+UPLOAD_DIR = "uploaded_pdfs"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+@router.post(
+    "/upload-pdf",
+    response_class=JSONResponse,
+    tags=["Upload"],
+)
+async def upload_pdf(file: UploadFile = File(...)):
+    """
+    Upload a PDF file, save it locally, and return its source_url for processing.
+    """
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
+
+    file_id = str(uuid4())
+    filename = f"{file_id}.pdf"
+    file_path = os.path.join(UPLOAD_DIR, filename)
+
+    with open(file_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+
+    # Construct a local URL for the uploaded file
+    source_url = f"/{UPLOAD_DIR}/{filename}"
+
+    return {"source_url": source_url}
 
 @router.post(
     "/vectorize",
@@ -34,10 +65,18 @@ async def vectorize_pdf(
     """
     This endpoint accepts a URL to a PDF, processes it, and stores its
     vectorized content in a Qdrant database.
+    Supports both remote URLs and local uploaded files.
     """
     try:
+        source_url = request.source_url
+        # If source_url is a local path, convert to absolute file path
+        if source_url.startswith("/uploaded_pdfs/"):
+            local_path = os.path.join("uploaded_pdfs", os.path.basename(source_url))
+            # Pass a special file:// URL to the processor
+            source_url = f"file://{os.path.abspath(local_path)}"
+
         # 1. Process the PDF to extract content
-        file_hash, contents = await pdf_processor.process_pdf(request.source_url)
+        file_hash, contents = await pdf_processor.process_pdf(source_url)
         
         # 2. Check if the document has already been processed
         existing_ids = await vector_service.check_document_exists(file_hash)

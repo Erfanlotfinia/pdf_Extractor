@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from api.endpoints import router as api_router
 
 app = FastAPI(
@@ -8,6 +9,9 @@ app = FastAPI(
 )
 
 app.include_router(api_router, prefix="/api/v1", tags=["Vectorization"])
+
+# Mount static files for uploaded PDFs
+app.mount("/uploaded_pdfs", StaticFiles(directory="uploaded_pdfs"), name="uploaded_pdfs")
 
 @app.get("/", tags=["Health Check"])
 async def read_root():

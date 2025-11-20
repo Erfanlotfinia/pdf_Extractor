@@ -19,6 +19,7 @@ class PDFProcessor:
     async def _download_pdf(self, url: str) -> str:
         """
         Downloads a PDF from a given URL to a temporary file.
+        If url starts with file://, just return the local file path.
         
         Args:
             url: The URL of the PDF to download.
@@ -30,6 +31,10 @@ class PDFProcessor:
             httpx.HTTPStatusError: If the download fails.
             ValueError: If the content is not a PDF.
         """
+        if url.startswith("file://"):
+            # Local file, just return the path
+            return url[7:]
+
         async with self.client.stream("GET", url, follow_redirects=True) as response:
             response.raise_for_status()
             
