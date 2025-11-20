@@ -1,4 +1,8 @@
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
+
+load_dotenv()
 
 class Settings(BaseSettings):
     """
@@ -14,11 +18,18 @@ class Settings(BaseSettings):
     MINIO_HOST: str = "minio"
     MINIO_PORT: int = 9000
     MINIO_BUCKET: str = "docs"
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    OPENAI_BASE_URL: str = "https://api.avalai.ir/v1"
+    EMBEDDING_MODEL_NAME: str = "text-embedding-3-small"
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_COLLECTION_NAME: str = "pdf_documents"
 
-settings = Settings()
+    model_config = ConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True
+    )
 
 def get_settings() -> Settings:
     return settings
+
+settings = Settings()
