@@ -1,32 +1,33 @@
 version: '3.8'
 
 services:
-#  app:
-#    build: .
-#    container_name: pdf-vectorizer
-#    environment:
-#      QDRANT_HOST: qdrant
-#      QDRANT_PORT: 6333
-#      OPENAI_API_KEY: ${OPENAI_API_KEY}
-#      EMBEDDING_MODEL: text-embedding-3-small
-#      EMBEDDING_DIM: 1536
-#      QDRANT_COLLECTION: pdf_documents
-#      MINIO_HOST: minio
-#      MINIO_PORT: 9000
-#      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-#      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-#      MINIO_BUCKET: ${MINIO_BUCKET}
-#    ports:
-#      - "8000:8000"
-#    volumes:
-#      - ./app:/app/app
-#    env_file:
-#      - .env
-#    depends_on:
-#      - qdrant
-#      - minio
-#    networks:
-#      - pdf-vectorizer-net
+  app:
+    build: .
+    container_name: pdf-vectorizer
+    environment:
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      EMBEDDING_MODEL: text-embedding-3-small
+      EMBEDDING_DIM: 1536
+      QDRANT_COLLECTION: pdf_documents
+      MINIO_HOST: minio
+      MINIO_PORT: 9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/app/app
+    env_file:
+      - .env
+    depends_on:
+      - qdrant
+      - minio
+    networks:
+      - pdf-vectorizer-net
+
   qdrant:
     image: qdrant/qdrant:latest
     ports:
