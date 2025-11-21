@@ -9,24 +9,30 @@ class Settings(BaseSettings):
     Configuration class for the application.
     Reads environment variables from a .env file or the environment.
     """
+    # OpenAI / Embedding Settings
     OPENAI_API_KEY: str
-    QDRANT_URL: str = "http://localhost:6333"
+    OPENAI_BASE_URL: str = "https://api.avalai.ir/v1"
     EMBEDDING_MODEL_NAME: str = "text-embedding-3-small"
-    QDRANT_COLLECTION_NAME: str = "pdf-vectors"
+    EMBEDDING_DIMENSION: int = 1536 # Default for text-embedding-3-small
+
+    # Qdrant Settings
+    QDRANT_URL: str = "http://qdrant:6333"
+    QDRANT_COLLECTION_NAME: str = "pdf_documents"
+
+    # MinIO Settings
     MINIO_ROOT_USER: str = "minioadmin"
     MINIO_ROOT_PASSWORD: str = "minioadmin"
     MINIO_HOST: str = "minio"
     MINIO_PORT: int = 9000
     MINIO_BUCKET: str = "docs"
-    OPENAI_BASE_URL: str = "https://api.avalai.ir/v1"
-    EMBEDDING_MODEL_NAME: str = "text-embedding-3-small"
-    QDRANT_URL: str = "http://localhost:6333"
-    QDRANT_COLLECTION_NAME: str = "pdf_documents"
+
+    # PDF Processing Settings
+    OCR_LANGUAGE: str = "fas" # Persian language for OCR
 
     model_config = ConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=True
+        case_sensitive=False # Standard for env vars
     )
 
 def get_settings() -> Settings:
