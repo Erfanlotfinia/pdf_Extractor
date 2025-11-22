@@ -1,109 +1,94 @@
 import pytest
+from unittest.mock import MagicMock, AsyncMock
+
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, patch
-import respx
 
+# Mock the service classes BEFORE they are imported by the main application
+mock_storage_cls = MagicMock()
+mock_vector_cls = MagicMock()
+mock_processor_cls = MagicMock()
+
+@pytest.fixture(autouse=True)
+def patch_services(monkeypatch):
+    """Patch the service classes to return async-compatible mocks."""
+    # Configure the mock classes to return AsyncMock instances
+    storage_instance = AsyncMock()
+    vector_instance = AsyncMock()
+    processor_instance = AsyncMock()
+    
+    # CRITICAL: Ensure the default check for existing documents returns an empty list (falsy)
+    vector_instance.check_document_exists.return_value = []
+
+    mock_storage_cls.return_value = storage_instance
+    mock_vector_cls.return_value = vector_instance
+    mock_processor_cls.return_value = processor_instance
+
+    monkeypatch.setattr("app.main.MinioStorageService", mock_storage_cls)
+    monkeypatch.setattr("app.main.VectorService", mock_vector_cls)
+    monkeypatch.setattr("app.main.PDFProcessorService", mock_processor_cls)
+
+    yield storage_instance, vector_instance, processor_instance
+
+# Now, we can safely import the app
 from app.main import app
-from app.api.endpoints import get_pdf_processor, get_vector_service
-from app.models.schemas import ProcessedContent
-
-client = TestClient(app)
-
-# --- Mocks ---
+from app.models.schemas import DocumentMetadata, ProcessedContent
 
 @pytest.fixture
-def mock_pdf_processor():
-    mock = AsyncMock()
-    mock.process_pdf.return_value = ("test_hash", [ProcessedContent(
-        id="test-uuid",
-        content_type="text",
-        text_content="This is a test.",
-        metadata={"page": 1, "file_hash": "test_hash"}
-    )])
-    return mock
+def client():
+    """Provides a TestClient instance for the tests."""
+    with TestClient(app) as c:
+        yield c
 
-@pytest.fixture
-def mock_vector_service():
-    mock = AsyncMock()
-    mock.check_document_exists.return_value = [] # Assume document does not exist
-    mock.vectorize_and_upsert.return_value = None
-    return mock
+# --- Test Cases ---
 
+def test_health_check(client):
+    """Test the root health check endpoint."""
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
 
-# --- Tests ---
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_vectorize_pdf_success(mock_pdf_processor, mock_vector_service):
-    # Mock the external PDF download, which is part of the real PDFProcessor.
-    # Even though we mock the service, it's good practice for clarity.
-    respx.get("http://example.com/test.pdf").respond(
-        200, content=b"%PDF-1.4...", headers={"Content-Type": "application/pdf"}
-    )
-    
-    # Correctly override the dependency functions
-    app.dependency_overrides[get_pdf_processor] = lambda: mock_pdf_processor
-    app.dependency_overrides[get_vector_service] = lambda: mock_vector_service
-    
-    response = client.post(
-        "/api/v1/vectorize",
-        json={"source_url": "http://example.com/test.pdf"}
-    )
-    
+def test_upload_pdf_success(client, patch_services):
+    """Test successful PDF upload."""
+    storage_mock, _, _ = patch_services
+    files = {"file": ("test.pdf", b"dummy content", "application/pdf")}
+    response = client.post("/api/v1/upload", files=files)
     assert response.status_code == 200
     json_response = response.json()
     assert json_response["status"] == "success"
-    assert "PDF processed and vectorized successfully" in json_response["message"]
-    assert json_response["document_ids"] == ["test-uuid"]
+    assert "file_key" in json_response
+    storage_mock.upload_file.assert_awaited_once()
 
-    # Clean up dependency overrides
-    app.dependency_overrides = {}
+def test_upload_pdf_invalid_file_type(client):
+    """Test upload with a non-PDF file type."""
+    files = {"file": ("test.txt", b"not a pdf", "text/plain")}
+    response = client.post("/api/v1/upload", files=files)
+    assert response.status_code == 400
+    assert "Only PDF files are allowed" in response.json()["detail"]
 
-
-@pytest.mark.asyncio
-@respx.mock  # Added the missing respx mock decorator
-async def test_vectorize_pdf_already_processed(mock_pdf_processor, mock_vector_service):
-    # Mock the PDF download
-    respx.get("http://example.com/test.pdf").respond(
-        200, content=b"%PDF-1.4...", headers={"Content-Type": "application/pdf"}
-    )
-
-    # Setup mock to simulate that the document already exists
-    mock_vector_service.check_document_exists.return_value = ["existing_id_1", "existing_id_2"]
+def test_vectorize_with_file_key_success(client, patch_services):
+    """Test successful vectorization using a file_key."""
+    storage_mock, vector_mock, processor_mock = patch_services
+    processor_mock.process_pdf.return_value = ("mock_hash", [ProcessedContent(
+        content_type="text", text_content="Sample", metadata=DocumentMetadata(
+            page=1, section="s1", file_hash="mock_hash"
+        )
+    )])
     
-    app.dependency_overrides[get_pdf_processor] = lambda: mock_pdf_processor
-    app.dependency_overrides[get_vector_service] = lambda: mock_vector_service
-    
-    response = client.post(
-        "/api/v1/vectorize",
-        json={"source_url": "http://example.com/test.pdf"}
-    )
-    
+    response = client.post("/api/v1/vectorize", json={"file_key": "key.pdf"})
     assert response.status_code == 200
     json_response = response.json()
-    assert "Document already processed" in json_response["message"]
-    assert json_response["document_ids"] == ["existing_id_1", "existing_id_2"]
+    assert json_response["status"] == "success"
+    storage_mock.download_file.assert_awaited_with("key.pdf")
+    processor_mock.process_pdf.assert_awaited_once()
+    vector_mock.vectorize_and_upsert.assert_awaited_once()
 
-    app.dependency_overrides = {}
+def test_vectorize_document_already_processed(client, patch_services):
+    """Test the case where the document has already been vectorized."""
+    _, vector_mock, processor_mock = patch_services
+    processor_mock.process_pdf.return_value = ("mock_hash", [])
+    vector_mock.check_document_exists.return_value = ["existing_uuid"]
 
-@pytest.mark.asyncio
-@respx.mock
-async def test_vectorize_pdf_invalid_url(mock_pdf_processor, mock_vector_service):
-    # This test will fail if we don't override the dependencies, as the real services would be called.
-    app.dependency_overrides[get_pdf_processor] = lambda: mock_pdf_processor
-    app.dependency_overrides[get_vector_service] = lambda: mock_vector_service
-    
-    # Mock a failed download
-    respx.get("http://example.com/notfound.pdf").respond(404)
-    
-    # The real PDFProcessor will be called here, which is what we want to test.
-    # We need to remove the override for get_pdf_processor.
-    app.dependency_overrides = {} # Clear all overrides for this specific test case
-
-    response = client.post(
-        "/api/v1/vectorize",
-        json={"source_url": "http://example.com/notfound.pdf"}
-    )
-    
-    assert response.status_code == 400
-    assert "Failed to download PDF" in response.json()["detail"]
+    response = client.post("/api/v1/vectorize", json={"file_key": "processed.pdf"})
+    assert response.status_code == 200
+    assert "already been processed" in response.json()["message"]
+    vector_mock.vectorize_and_upsert.assert_not_awaited()
