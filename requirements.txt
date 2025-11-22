@@ -13,8 +13,7 @@ argon2-cffi-bindings==25.1.0
 attrs==25.4.0
 backoff==2.2.1
 beautifulsoup4==4.14.2
-boto3==1.41.2
-botocore==1.41.2
+botocore==1.40.70
 certifi==2025.11.12
 cffi==2.0.0
 charset-normalizer==3.4.4
@@ -53,6 +52,7 @@ huggingface-hub==0.36.0
 humanfriendly==10.0
 hyperframe==6.1.0
 idna==3.11
+iniconfig==2.3.0
 Jinja2==3.1.6
 jiter==0.12.0
 jmespath==1.0.1
@@ -60,11 +60,8 @@ joblib==1.5.2
 jsonpatch==1.33
 jsonpointer==3.0.0
 kiwisolver==1.4.9
-langchain-classic==1.0.0
-langchain-community==0.4.1
 langchain-core==1.1.0
 langchain-openai==1.0.3
-langchain-text-splitters==1.0.0
 langdetect==1.0.9
 langsmith==0.4.46
 lxml==6.0.2
@@ -108,6 +105,7 @@ pdf2image==1.17.0
 pdfminer.six==20251107
 pi_heif==1.1.1
 pillow==12.0.0
+pluggy==1.6.0
 portalocker==3.2.0
 propcache==0.4.1
 protobuf==6.33.1
@@ -121,6 +119,7 @@ Pygments==2.19.2
 pyparsing==3.2.5
 pypdf==6.3.0
 pypdfium2==5.0.0
+pytest==9.0.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
 python-iso639==2025.11.16
@@ -137,7 +136,6 @@ requests-toolbelt==1.0.0
 rich==14.2.0
 rich-toolkit==0.16.0
 rignore==0.7.6
-s3transfer==0.15.0
 safetensors==0.7.0
 scipy==1.16.3
 sentry-sdk==2.45.0
