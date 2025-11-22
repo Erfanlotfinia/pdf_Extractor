@@ -1,22 +1,49 @@
-# Use an official Python runtime as a parent image
-FROM python:3.12-slim
+# --- Build Stage ---
+FROM python:3.12-slim as builder
 
-# Set the working directory in the container
-WORKDIR /app
+WORKDIR /usr/src/app
 
-# Copy the dependency file to the working directory
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libmagic-dev \
+    poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 COPY requirements.txt .
-
-# Install any needed packages specified in requirements.txt
-# We use --no-cache-dir to reduce image size
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application's code to the working directory
-COPY ./app /app/app
+# --- Final Stage ---
+FROM python:3.12-slim
 
-# Expose the port the app runs on
+WORKDIR /app
+
+# 1. Install Tesseract, Farsi Pack, AND libgl1 (for OpenCV/Unstructured)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libmagic-dev \
+    poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-fas \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/venv /opt/venv
+
+ENV PATH="/opt/venv/bin:$PATH"
+
+# 2. FIX: TESSDATA_PREFIX must be a SINGLE path. 
+# On Debian/Ubuntu images, apt installs data to /usr/share/tesseract-ocr/4.00/tessdata
+ENV TESSDATA_PREFIX="/usr/share/tesseract-ocr/4.00/tessdata"
+
+RUN useradd --create-home --shell /bin/bash appuser
+USER appuser
+WORKDIR /home/appuser/app
+
+COPY ./app ./app
+
 EXPOSE 8000
 
-# Define the command to run the application
-# uvicorn app.main:app specifies the file, the app instance, the host, and the port
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
