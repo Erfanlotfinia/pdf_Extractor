@@ -26,11 +26,53 @@ The application is designed following Clean Architecture principles, ensuring a 
 - **Docker Compose**: The entire stack (FastAPI app, Qdrant, MinIO) is orchestrated with Docker Compose for easy setup and deployment.
 - **MinIO**: An S3-compatible object storage used to persist uploaded PDF files.
 - **Qdrant**: A high-performance vector database used to store the embeddings and associated metadata.
-- **LangChain**: Utilized for the document processing pipeline, including loading PDFs with `UnstructuredPDFLoader` and generating embeddings with `OpenAIEmbeddings`.
+- **LangChain & `unstructured`**: Utilized for the document processing pipeline, including loading PDFs and generating embeddings.
+
+### Data Flow Diagram
+
+```
++-----------+        +----------------------+        +-----------------+
+|           |        |                      |        |                 |
+|  Client   |------->|  FastAPI (/upload)   |------->|   MinIO         |
+|           |        |                      |        | (Object Storage)|
++-----------+        +----------------------+        +-----------------+
+      ^                        |                             |
+      |                        | (file_key)                  |
+      +------------------------+                             |
+                                                             |
++-----------+        +-------------------------+             |
+|           |        |                         |             |
+|  Client   |------->|  FastAPI (/vectorize)   |<------------+
+|           |        |                         |
++-----------+        +------------+------------+
+                                  |
+                                  | 1. Download to Temp File
+                                  v
++-----------------------------------------------------------------+
+|                   PDF Processing Service                        |
+|   +---------------------------------------------------------+   |
+|   | 2. Calculate Hash & Check Qdrant for Duplicates         |   |
+|   +---------------------------------------------------------+   |
+|   | 3. Extract Text, Tables, Images with `unstructured`     |   |
+|   +---------------------------------------------------------+   |
+|   | 4. Generate Embeddings via OpenAI-compatible service    |   |
+|   +---------------------------------------------------------+   |
+|   | 5. Upsert Vectors & Metadata to Qdrant                  |   |
+|   +---------------------------------------------------------+   |
++-----------------------------------------------------------------+
+
+```
+
+### Workflow Details
 
 The workflow is a two-step process:
-1.  **Upload**: The client uploads a PDF to the `/api/v1/upload` endpoint. The file is streamed to MinIO, and a unique `file_key` is returned.
-2.  **Vectorize**: The client sends the `file_key` (or a public URL) to the `/api/v1/vectorize` endpoint. The service downloads the PDF, processes it to extract content, checks for duplicates using a file hash, generates embeddings for each content chunk, and stores them in Qdrant.
+1.  **Upload**: The client uploads a PDF to the `/api/v1/upload` endpoint. The file is streamed directly to MinIO, and a unique `file_key` is returned. This avoids saving the file on the application server's local disk during upload.
+2.  **Vectorize**: The client sends the `file_key` (or a public URL) to the `/api/v1/vectorize` endpoint. The service then:
+    a. Downloads the corresponding PDF from MinIO into a temporary file on the application server.
+    b. Processes the local temporary file to extract content, calculate a file hash, and generate embeddings.
+    c. Checks Qdrant to see if the file hash already exists to prevent duplicate processing.
+    d. Stores the resulting vectors and metadata in Qdrant.
+    e. Deletes the temporary file after processing is complete.
 
 ---
 
