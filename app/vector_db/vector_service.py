@@ -10,8 +10,8 @@ from langchain_openai import OpenAIEmbeddings
 from qdrant_client import AsyncQdrantClient, models
 from qdrant_client.http.exceptions import UnexpectedResponse
 
-from core.config import settings
-from models.schemas import ProcessedContent
+from app.core.config import settings
+from app.models.schemas import ProcessedContent
 
 logger = logging.getLogger(__name__)
 
