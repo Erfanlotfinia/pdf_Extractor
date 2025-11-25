@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # PDF Processing Settings
     OCR_LANGUAGE: str = "fas" # Persian language for OCR
 
+    # gRPC Server Settings
+    GRPC_PORT: int = 50051
+
     model_config = ConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

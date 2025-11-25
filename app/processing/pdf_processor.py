@@ -16,8 +16,8 @@ from unstructured.documents.elements import (
     ListItem
 )
 
-from core.config import settings
-from models.schemas import ProcessedContent, DocumentMetadata
+from app.core.config import settings
+from app.models.schemas import ProcessedContent, DocumentMetadata
 
 logger = logging.getLogger(__name__)
 

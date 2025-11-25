@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package vectorizer;
+
+// The service definition for vectorization
+service VectorizeService {
+  // Processes a document from a given source
+  rpc ProcessDocument(DocumentRequest) returns (ProcessingResponse) {}
+}
+
+// The request message containing the document identifier
+message DocumentRequest {
+  oneof source {
+    string minio_key = 1;
+    string source_url = 2;
+  }
+}
+
+// The response message confirming the processing result
+message ProcessingResponse {
+  bool success = 1;
+  string document_id = 2;
+  string message = 3;
+  int32 chunk_count = 4;
+}
