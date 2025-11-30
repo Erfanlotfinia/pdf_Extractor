@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     # Qdrant Settings
     QDRANT_URL: str = "http://qdrant:6333"
+    QDRANT_API_KEY: str = ""
     QDRANT_COLLECTION_NAME: str = "pdf_documents"
 
     # MinIO Settings
