@@ -13,6 +13,7 @@ This project provides a production-ready FastAPI microservice for extracting tex
 - [API Usage](#api-usage)
   - [1. Upload a PDF](#1-upload-a-pdf)
   - [2. Vectorize the PDF](#2-vectorize-the-pdf)
+  - [3. Search for Content](#3-search-for-content)
 - [Future Improvements](#future-improvements)
 
 ---
@@ -30,49 +31,47 @@ The application is designed following Clean Architecture principles, ensuring a 
 
 ### Data Flow Diagram
 
-```
-+-----------+        +----------------------+        +-----------------+
-|           |        |                      |        |                 |
-|  Client   |------->|  FastAPI (/upload)   |------->|   MinIO         |
-|           |        |                      |        | (Object Storage)|
-+-----------+        +----------------------+        +-----------------+
-      ^                        |                             |
-      |                        | (file_key)                  |
-      +------------------------+                             |
-                                                             |
-+-----------+        +-------------------------+             |
-|           |        |                         |             |
-|  Client   |------->|  FastAPI (/vectorize)   |<------------+
-|           |        |                         |
-+-----------+        +------------+------------+
-                                  |
-                                  | 1. Download to Temp File
-                                  v
-+-----------------------------------------------------------------+
-|                   PDF Processing Service                        |
-|   +---------------------------------------------------------+   |
-|   | 2. Calculate Hash & Check Qdrant for Duplicates         |   |
-|   +---------------------------------------------------------+   |
-|   | 3. Extract Text, Tables, Images with `unstructured`     |   |
-|   +---------------------------------------------------------+   |
-|   | 4. Generate Embeddings via OpenAI-compatible service    |   |
-|   +---------------------------------------------------------+   |
-|   | 5. Upsert Vectors & Metadata to Qdrant                  |   |
-|   +---------------------------------------------------------+   |
-+-----------------------------------------------------------------+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant FastAPI
+    participant MinIO
+    participant Qdrant
 
+    Client->>+FastAPI: POST /api/v1/upload (PDF file)
+    FastAPI->>+MinIO: Stream file upload
+    MinIO-->>-FastAPI: Upload success
+    FastAPI-->>-Client: { "file_key": "..." }
+
+    Client->>+FastAPI: POST /api/v1/vectorize (file_key)
+    FastAPI->>+MinIO: Download file
+    MinIO-->>-FastAPI: Return file content
+    FastAPI->>FastAPI: Process PDF (extract content, calculate hash)
+    FastAPI->>+Qdrant: Check if hash exists
+    Qdrant-->>-FastAPI: (Optional) Returns existing IDs
+    alt If hash NOT exists OR force_reload=true
+        FastAPI->>FastAPI: Generate embeddings (OpenAI)
+        FastAPI->>+Qdrant: Upsert new vectors
+        Qdrant-->>-FastAPI: Upsert success
+    end
+    FastAPI-->>-Client: { "document_ids": [...] }
+
+    Client->>+FastAPI: POST /api/v1/search (query)
+    FastAPI->>+Qdrant: Perform vector search
+    Qdrant-->>-FastAPI: Return search results
+    FastAPI-->>-Client: { "results": [...] }
 ```
 
 ### Workflow Details
 
-The workflow is a two-step process:
-1.  **Upload**: The client uploads a PDF to the `/api/v1/upload` endpoint. The file is streamed directly to MinIO, and a unique `file_key` is returned. This avoids saving the file on the application server's local disk during upload.
-2.  **Vectorize**: The client sends the `file_key` (or a public URL) to the `/api/v1/vectorize` endpoint. The service then:
-    a. Downloads the corresponding PDF from MinIO into a temporary file on the application server.
-    b. Processes the local temporary file to extract content, calculate a file hash, and generate embeddings.
-    c. Checks Qdrant to see if the file hash already exists to prevent duplicate processing.
-    d. Stores the resulting vectors and metadata in Qdrant.
-    e. Deletes the temporary file after processing is complete.
+The workflow is a three-step process:
+1.  **Upload**: The client uploads a PDF to the `/api/v1/upload` endpoint. The file is streamed directly to MinIO, and a unique `file_key` is returned.
+2.  **Vectorize**: The client sends the `file_key` to the `/api/v1/vectorize` endpoint.
+    - The service downloads the PDF from MinIO to a temporary local file.
+    - It calculates the file's SHA256 hash and checks Qdrant to see if the document has already been processed.
+    - If the hash is new (or if `force_reload` is true), it extracts content, generates embeddings, and upserts the vectors and metadata into Qdrant.
+    - The temporary file is deleted after processing.
+3.  **Search**: The client sends a query to the `/api/v1/search` endpoint. The service converts the query into a vector and performs a similarity search in Qdrant to retrieve the most relevant document chunks.
 
 ---
 
@@ -175,7 +174,7 @@ curl -X 'POST' \
 
 ### 2. Vectorize the PDF
 
-Use the `file_key` from the upload step to trigger the vectorization process. Alternatively, you can provide a public `source_url`.
+Use the `file_key` from the upload step to trigger the vectorization process. You can also force the system to re-process a document that already exists.
 
 **Request (using `file_key`):**
 ```bash
@@ -184,7 +183,8 @@ curl -X 'POST' \
   -H 'accept: application/json' \
   -H 'Content-Type: application/json' \
   -d '{
-    "file_key": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.pdf"
+    "file_key": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.pdf",
+    "force_reload": false
   }'
 ```
 
@@ -192,21 +192,46 @@ curl -X 'POST' \
 ```json
 {
   "status": "success",
-  "message": "PDF processed and vectorized successfully.",
+  "message": "Successfully processed and vectorized.",
   "document_ids": [
     "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-    "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
     ...
-  ]
+  ],
+  "file_hash": "abc123..."
 }
 ```
 
-**Response if Document Already Processed:**
+### 3. Search for Content
+
+Perform a semantic search for a query and optionally filter by a specific document hash.
+
+**Request:**
+```bash
+curl -X 'POST' \
+  'http://localhost:8000/api/v1/search' \
+  -H 'accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "What are the main findings?",
+    "limit": 5,
+    "file_hash": "abc123..."
+  }'
+```
+
+**Successful Response (200 OK):**
 ```json
 {
   "status": "success",
-  "message": "Document has already been processed.",
-  "document_ids": [...]
+  "results": [
+    {
+      "score": 0.89,
+      "text": "The main findings indicate a positive correlation...",
+      "page": 4,
+      "section": "Conclusion",
+      "content_type": "text",
+      "metadata": { ... }
+    }
+  ]
 }
 ```
 
