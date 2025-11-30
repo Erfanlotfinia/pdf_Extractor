@@ -179,10 +179,10 @@ class VectorService:
                 logger.error(f"Batch processing failed: {e}")
                 raise e
 
-    async def vectorize_and_upsert(self, contents: List[ProcessedContent], file_hash: str):
+    async def vectorize_and_upsert(self, contents: List[ProcessedContent], file_hash: str, force_reload: bool = False):
         """
         Main pipeline:
-        1. Cleans old data for this file.
+        1. Cleans old data for this file if force_reload is True.
         2. Chunks data into batches.
         3. Processes batches concurrently.
         """
@@ -190,7 +190,8 @@ class VectorService:
             return
 
         # 1. Clean old data to enforce consistency
-        await self.clean_file_data(file_hash)
+        if force_reload:
+            await self.clean_file_data(file_hash)
 
         total_items = len(contents)
         logger.info(f"Starting concurrent vectorization for {total_items} items...")

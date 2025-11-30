@@ -144,7 +144,7 @@ async def vectorize_pdf(
 
         # 5. Vectorize & Upsert
         # Pass file_hash to allow cleaning old vectors before write (Consistency)
-        await vector_service.vectorize_and_upsert(contents, file_hash)
+        await vector_service.vectorize_and_upsert(contents, file_hash, force_reload=request.force_reload)
         
         new_ids = [str(c.id) for c in contents]
         

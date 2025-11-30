@@ -15,7 +15,7 @@ from unstructured.documents.elements import (
     Image,
 )
 
-from models.schemas import ProcessedContent, DocumentMetadata
+from app.models.schemas import ProcessedContent, DocumentMetadata
 
 logger = logging.getLogger(__name__)
 
