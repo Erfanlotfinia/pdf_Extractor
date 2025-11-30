@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: str = "https://api.avalai.ir/v1"
     EMBEDDING_MODEL_NAME: str = "text-embedding-3-small"
     EMBEDDING_DIMENSION: int = 1536 # Default for text-embedding-3-small
+     
+    # GitHub Settings
+    GITHUB_BASE_URL: str = "https://models.inference.ai.azure.com"
+    GITHUB_TOKEN: str
 
     # Qdrant Settings
     QDRANT_URL: str = "http://qdrant:6333"
